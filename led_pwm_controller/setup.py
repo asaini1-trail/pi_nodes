@@ -10,6 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', [
+            'led_pwm_controller/launch/led_pwm_launch.py',
+            'led_pwm_controller/launch/combined_launch.py',
+        ]),
     ],
     install_requires=['setuptools', 'pigpio'],
     zip_safe=True,
@@ -19,7 +23,7 @@ setup(
     license='Apache License 2.0',
     entry_points={
         'console_scripts': [
-            'led_pwm_node = led_pwm_controller.led_pwm_controller:main'
+            'led_pwm_controller = led_pwm_controller.led_pwm_controller:main'
         ],
     },
 )
