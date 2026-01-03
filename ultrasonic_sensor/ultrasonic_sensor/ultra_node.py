@@ -99,34 +99,40 @@ class UltrasonicNode(Node):
         echo_before = GPIO.input(self.echo)
         if echo_before == 1:
             # Echo is stuck HIGH - try to clear it
-            # First, ensure trigger is LOW
             GPIO.output(self.trig, False)
             time.sleep(0.00001)
             
-            # Send a trigger pulse to try to reset the sensor
-            GPIO.output(self.trig, True)
-            time.sleep(0.00002)
-            GPIO.output(self.trig, False)
+            # Send multiple trigger pulses to try to reset the sensor
+            for _ in range(5):
+                GPIO.output(self.trig, True)
+                time.sleep(0.00002)
+                GPIO.output(self.trig, False)
+                time.sleep(0.001)
+                if GPIO.input(self.echo) == 0:
+                    break
             
-            # Wait longer for echo to clear (up to 100ms)
-            clear_timeout = 0.1
+            # Wait for echo to clear (up to 200ms)
+            clear_timeout = 0.2
             clear_start = time.time()
             while GPIO.input(self.echo) == 1:
                 if time.time() - clear_start > clear_timeout:
-                    # Still stuck after timeout
+                    # Still stuck after timeout - publish 0 and skip this measurement
                     current_time = time.time()
                     if current_time - self.last_stuck_high_warning > self.stuck_high_warning_interval:
                         self.get_logger().warn(
-                            'ECHO pin stuck HIGH for >100ms - sensor may be faulty, disconnected, or needs power cycle'
+                            'ECHO pin stuck HIGH - sensor may be faulty, disconnected, or needs power cycle. Check wiring: TRIG=23, ECHO=24, VCC=5V, GND'
                         )
                         self.last_stuck_high_warning = current_time
                     self.consecutive_errors += 1
-                    time.sleep(0.05)  # Longer delay when stuck
+                    msg = Float32()
+                    msg.data = 10000.0
+                    self.publisher.publish(msg)
+                    time.sleep(0.1)  # Longer delay when stuck
                     return
-                time.sleep(0.001)  # Check every 1ms
+                time.sleep(0.001)
             
-            # Echo cleared, but wait a bit longer before next measurement
-            time.sleep(0.01)
+            # Echo cleared, wait before next measurement
+            time.sleep(0.02)
         # Ensure trigger is LOW first
         GPIO.output(self.trig, False)
         time.sleep(0.00002)  # 20 microseconds
@@ -139,21 +145,34 @@ class UltrasonicNode(Node):
         # Wait a bit for echo to start (sensor needs time to process)
         time.sleep(0.00002)  # 20 microseconds
 
-        timeout = 0.03  # 30 ms timeout for echo response
+        timeout = 0.05  # 50 ms timeout for echo response
         timeout_start = time.time()
         initial_echo_state = GPIO.input(self.echo)
 
         # Wait for echo to go HIGH (with timeout)
-        # If echo is already HIGH, skip this wait
         if initial_echo_state == 0:
             while GPIO.input(self.echo) == 0:
                 if time.time() - timeout_start > timeout:
                     self._handle_error_with_diagnostics(
                         f'Timeout waiting for echo to go HIGH. Echo was {initial_echo_state} after trigger'
                     )
-                    # Add a longer delay after error to give sensor time to recover
-                    time.sleep(0.01)
+                    msg = Float32()
+                    msg.data = 10000.0
+                    self.publisher.publish(msg)
+                    time.sleep(0.05)
                     return
+        else:
+            # Echo is already HIGH - this shouldn't happen if stuck HIGH check worked
+            # But if it does, wait a bit and check again
+            time.sleep(0.001)
+            if GPIO.input(self.echo) == 1:
+                # Still HIGH, publish 10000 and skip this measurement
+                self.consecutive_errors += 1
+                msg = Float32()
+                msg.data = 10000.0
+                self.publisher.publish(msg)
+                time.sleep(0.05)
+                return
         
         # Record when echo goes HIGH
         start = time.time()
@@ -163,8 +182,10 @@ class UltrasonicNode(Node):
         while GPIO.input(self.echo) == 1:
             if time.time() - timeout_start > timeout:
                 self._handle_error('Timeout waiting for echo to go LOW')
-                # Add a longer delay after error to give sensor time to recover
-                time.sleep(0.01)
+                msg = Float32()
+                msg.data = 10000.0
+                self.publisher.publish(msg)
+                time.sleep(0.05)
                 return
         
         stop = time.time()
@@ -181,6 +202,9 @@ class UltrasonicNode(Node):
                 self._handle_error(f'Invalid distance reading: {distance:.2f} cm (out of range {self.min_distance}-{self.max_distance} cm)')
             else:
                 self.consecutive_errors += 1
+            msg = Float32()
+            msg.data = 10000.0
+            self.publisher.publish(msg)
             time.sleep(0.01)  # Small delay after invalid reading
             return
         
